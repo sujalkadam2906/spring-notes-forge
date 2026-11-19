@@ -1,0 +1,9 @@
+# Spring Boot Master Study Notes Automation Pipeline
+# Python 3.10+ dependencies
+
+google-genai>=3.0.0
+python-dotenv>=1.0.0
+playwright>=1.40.0
+reportlab>=4.0.0
+pypdf>=5.0.0
+pymupdf>=1.24.0

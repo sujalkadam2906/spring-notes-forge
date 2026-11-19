@@ -1,0 +1,51 @@
+# Environments and Secrets
+.env
+.env*.local
+!.env.example
+
+# Python virtual environments
+.venv/
+.venv*/
+new compressed/
+venv/
+ENV/
+env/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Workspace cache and temporary build artifacts
+work/
+*.tmp
+*.tmp.pdf
+*.log
+
+# Course source materials (copyrighted instructor notes, code, and videos)
+repo/
+
+# Generated course PDF deliverables (protecting intellectual property)
+output/*.pdf
+output/preview_*/
+output/page_tracker.json
+
+# IDE and Editor configuration
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+# Operating System files
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+.DS_Store
+
+# Test / Coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
