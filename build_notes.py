@@ -115,7 +115,7 @@ def run_lecture(
     print(f"  - Verified Starting Page: {start_page}")
     print(f"  - Book Pages Generated So Far: {budget['pages_used']}/{budget['book_target']}")
     print(f"  - Remaining Lectures: {budget['lectures_remaining']}")
-    print(f"  - Target Size For This Lecture: ~{target_pages} pages")
+    print(f"  - Suggested Size For This Lecture: ~{target_pages} pages (editorial guidance, not strict)")
 
     # 4. Content Acquisition (Reuse cached HTML or Call Gemini)
     html_cache_file = WORK_DIR / f"lecture_{lecture_num:02d}.html"
@@ -139,8 +139,33 @@ def run_lecture(
             system_instruction=system_prompt,
             work_dir=WORK_DIR,
         )
-        # Cache HTML
-        html_cache_file.write_text(body_html, encoding="utf-8")
+        # Validate HTML before caching — never cache empty or malformed output
+        if not body_html or not body_html.strip():
+            raise RuntimeError(
+                f"Generation returned empty HTML for Lecture {lecture_num}. "
+                "Refusing to cache empty output."
+            )
+        if "<h1>" not in body_html.lower():
+            raise RuntimeError(
+                f"Generation returned HTML without <h1> tag for Lecture {lecture_num}. "
+                "Refusing to cache malformed output."
+            )
+        # Save HTML cache atomically to prevent corruption
+        import tempfile
+        cache_tmp_fd, cache_tmp_path = tempfile.mkstemp(
+            dir=str(WORK_DIR), suffix=".html.tmp"
+        )
+        try:
+            with os.fdopen(cache_tmp_fd, "w", encoding="utf-8") as tmp_f:
+                tmp_f.write(body_html)
+            os.replace(cache_tmp_path, str(html_cache_file))
+        except Exception:
+            # Clean up temp file on failure; do not corrupt cache
+            try:
+                os.unlink(cache_tmp_path)
+            except OSError:
+                pass
+            raise
 
     # 5. Extract Title and Construct Output Filename
     t_match = re.search(r"<h1>\s*Lecture\s+\d+\s*[·:\-]\s*(.*?)\s*</h1>", body_html, re.IGNORECASE | re.DOTALL)
@@ -218,7 +243,7 @@ def display_status(tracker: PageTracker) -> None:
     valid, issues = tracker.validate_integrity()
     print("-" * 75)
     total_pages = tracker.get_last_completed_page()
-    print(f"Total Pages Generated: {total_pages} / Target {tracker.BOOK_TARGET} (Hard Limit {tracker.HARD_CEILING})")
+    print(f"Total Pages Generated: {total_pages} / Target ~{tracker.BOOK_TARGET} (soft estimate, warning at {tracker.HARD_CEILING})")
     print(f"Integrity Check: {'PASS (Continuous)' if valid else 'FAIL'}")
     if issues:
         for iss in issues:
@@ -238,6 +263,7 @@ def main() -> None:
     parser.add_argument("--force", action="store_true", help="Regenerate lecture even if PDF exists")
     parser.add_argument("--status", action="store_true", help="Display book pagination status and integrity")
     parser.add_argument("--check", type=int, help="Run QA checks on an already generated lecture PDF")
+    parser.add_argument("--diagnose", action="store_true", help="Run API diagnostic: verify each configured model with a minimal generateContent request")
 
     args = parser.parse_args()
     output_dir = Path(args.out)
@@ -255,6 +281,18 @@ def main() -> None:
         for m in client.client.models.list():
             if "generateContent" in (m.supported_actions or []):
                 print(f"  - {m.name.replace('models/', '')}")
+        return
+
+    if args.diagnose:
+        cfg = GeminiConfig.from_env()
+        client = GeminiClient(cfg)
+        print("\n=== API Model Diagnostic ===")
+        print(f"API Key: {cfg.api_key[:4]}****{cfg.api_key[-4:]}")
+        results = client.verify_models()
+        for model_name, info in results.items():
+            status_icon = "✓" if info.get("available") else "✗"
+            print(f"  [{status_icon}] {info['role']}: {model_name} — {info['status']}")
+        print("=" * 40)
         return
 
     if args.check is not None:

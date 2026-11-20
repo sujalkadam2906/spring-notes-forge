@@ -23,35 +23,42 @@ from pipeline.sources import LectureSources
 load_dotenv()
 
 
-def is_retriable_error(exc: Exception) -> Tuple[bool, str]:
+def is_retriable_error(exc: Exception) -> Tuple[bool, str, bool]:
     """Determines whether an exception is a temporary/retriable error.
 
     Returns:
-        (is_retriable: bool, reason: str)
+        (is_retriable: bool, reason: str, is_quota_exhausted: bool)
     """
     # 1. API errors with status code
     if isinstance(exc, errors.APIError):
         code = getattr(exc, "code", None)
-        # Temporary status codes: 429 (Rate Limit / Quota), 500, 502, 503, 504, 408
-        if code in (429, 500, 502, 503, 504, 408):
-            return True, f"HTTP {code} (temporary API error)"
+        if code == 429:
+            msg_lower = (getattr(exc, "message", "") or str(exc)).lower()
+            quota_indicators = ("quota", "exhausted", "daily limit", "billing",
+                                "generaterequestsperdayperprojectpermodel")
+            if any(ind in msg_lower for ind in quota_indicators):
+                return False, "HTTP 429 (quota exhausted)", True
+            return True, "HTTP 429 (temporary rate limit)", False
+        # Temporary status codes: 500, 502, 503, 504, 408
+        if code in (500, 502, 503, 504, 408):
+            return True, f"HTTP {code} (temporary API error)", False
         # Permanent client errors: 400, 401, 403, 404, etc.
         if code in (400, 401, 403, 404):
-            return False, f"HTTP {code} (permanent client error)"
+            return False, f"HTTP {code} (permanent client error)", False
         if code is not None and 400 <= code < 500:
-            return False, f"HTTP {code} (permanent client error)"
+            return False, f"HTTP {code} (permanent client error)", False
         if code is not None and code >= 500:
-            return True, f"HTTP {code} (server error)"
+            return True, f"HTTP {code} (server error)", False
 
     # 2. Connection and timeout errors
     if isinstance(exc, (ConnectionError, TimeoutError)):
-        return True, f"Connection interruption ({type(exc).__name__})"
+        return True, f"Connection interruption ({type(exc).__name__})", False
 
     if isinstance(exc, OSError):
         winerror = getattr(exc, "winerror", None)
         errno = getattr(exc, "errno", None)
         if winerror in (10053, 10054, 10060, 10061) or errno in (10053, 10054, 10060, 10061):
-            return True, f"Socket/Network error (WinError/errno {winerror or errno})"
+            return True, f"Socket/Network error (WinError/errno {winerror or errno})", False
 
     # 3. Text-based detection for network/transport drops and WinError 10053
     exc_str = str(exc).lower()
@@ -69,12 +76,12 @@ def is_retriable_error(exc: Exception) -> Tuple[bool, str]:
         "network unreachable",
     )
     if any(sig in exc_str for sig in transient_signatures):
-        return True, f"Connection interruption ({type(exc).__name__}: transient network issue)"
+        return True, f"Connection interruption ({type(exc).__name__}: transient network issue)", False
 
-    return False, f"Non-retriable error ({type(exc).__name__})"
+    return False, f"Non-retriable error ({type(exc).__name__})", False
 
 
-def calculate_backoff(attempt: int, base_sec: float = 15.0, max_sec: float = 120.0) -> float:
+def calculate_backoff(attempt: int, base_sec: float = 5.0, max_sec: float = 20.0) -> float:
     """Calculates exponential backoff delay with random jitter.
 
     Formula: min(max_sec, base * 2^(attempt-1)) + jitter
@@ -91,10 +98,12 @@ class GeminiConfig:
     api_key: str
     primary_model: str
     fallback_model: str
+    fallback_model_2: str = ""
     max_output_tokens: int = 60000
     temperature: float = 0.25
-    max_retries: int = 5
-    initial_backoff_sec: int = 15
+    max_retries: int = 2
+    initial_backoff_sec: int = 5
+    max_backoff_sec: float = 20.0
 
     @classmethod
     def from_env(cls) -> GeminiConfig:
@@ -105,29 +114,59 @@ class GeminiConfig:
             )
         primary = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         fallback = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-4-hydrogen")
-        max_retries = int(os.getenv("GEMINI_MAX_RETRIES", "5"))
-        initial_backoff = int(os.getenv("GEMINI_INITIAL_BACKOFF_SEC", "15"))
+        fallback_2 = os.getenv("GEMINI_FALLBACK_MODEL_2", "")
+        max_retries = int(os.getenv("GEMINI_MAX_RETRIES", "2"))
+        initial_backoff = int(os.getenv("GEMINI_INITIAL_BACKOFF_SEC", "5"))
+        max_backoff = float(os.getenv("GEMINI_MAX_BACKOFF_SEC", "20.0"))
         return cls(
             api_key=key,
             primary_model=primary,
             fallback_model=fallback,
+            fallback_model_2=fallback_2,
             max_retries=max_retries,
             initial_backoff_sec=initial_backoff,
+            max_backoff_sec=max_backoff,
         )
+
+
+class ModelCooldownTracker:
+    """Process-local cooldown for models experiencing repeated temporary errors."""
+    def __init__(self, cooldown_seconds: float = 60.0):
+        self._cooldowns: Dict[str, float] = {}
+        self.cooldown_seconds = cooldown_seconds
+
+    def mark_failed(self, model: str) -> None:
+        self._cooldowns[model] = time.time()
+
+    def is_cooled_down(self, model: str) -> bool:
+        t = self._cooldowns.get(model)
+        if t is None:
+            return True
+        return (time.time() - t) >= self.cooldown_seconds
+
+    def clear(self, model: str) -> None:
+        self._cooldowns.pop(model, None)
 
 
 class GeminiClient:
     def __init__(self, config: Optional[GeminiConfig] = None):
         self.config = config or GeminiConfig.from_env()
         self.client = genai.Client(api_key=self.config.api_key)
+        self._cooldown = ModelCooldownTracker()
 
     def verify_models(self) -> Dict[str, Dict[str, Any]]:
         """Verifies configured models against actual Gemini API and reports availability."""
         results: Dict[str, Dict[str, Any]] = {}
-        for role, model_name in [("Primary", self.config.primary_model), ("Fallback", self.config.fallback_model)]:
+        model_entries = [
+            ("Primary", self.config.primary_model),
+            ("Fallback-1", self.config.fallback_model),
+            ("Fallback-2", self.config.fallback_model_2),
+        ]
+        for role, model_name in model_entries:
             if not model_name:
                 continue
             entry: Dict[str, Any] = {"role": role, "model": model_name, "available": False, "status": "unknown"}
+            print(f"[DIAGNOSTIC] Testing {role} model '{model_name}' via generateContent...", flush=True)
             try:
                 resp = self.client.models.generate_content(
                     model=model_name,
@@ -144,8 +183,15 @@ class GeminiClient:
                     entry["available"] = False
                     entry["status"] = f"Unavailable (HTTP 404: {e.message or 'Model not found for this API version/endpoint'})"
                 elif e.code == 429:
-                    entry["available"] = False
-                    entry["status"] = f"Quota exceeded (HTTP 429: {e.message or 'Resource exhausted'})"
+                    msg_lower = (e.message or str(e)).lower()
+                    quota_indicators = ("quota", "exhausted", "daily limit", "billing",
+                                        "generaterequestsperdayperprojectpermodel")
+                    if any(ind in msg_lower for ind in quota_indicators):
+                        entry["available"] = False
+                        entry["status"] = "Quota exhausted"
+                    else:
+                        entry["available"] = True
+                        entry["status"] = "Rate limited (temporary)"
                 else:
                     entry["available"] = False
                     entry["status"] = f"HTTP {e.code}: {e.message or str(e)}"
@@ -159,38 +205,31 @@ class GeminiClient:
         parts: List[Any] = []
         uploaded_remote_files: List[str] = []
 
-        # 1. Primary Source
+        source_entries = []
         if sources.primary_pdf:
-            parts.append(
-                f"=== PRIMARY SOURCE: Instructor's Handwritten / Excalidraw Notes ({sources.primary_pdf.name}) ===\n"
+            source_entries.append(("PRIMARY SOURCE", f"Instructor's Handwritten / Excalidraw Notes ({sources.primary_pdf.name})",
                 "CRITICAL: Follow this document's teaching order, concept sequence, mental models, "
-                "and diagrams as the primary foundation for the lecture."
-            )
-            up = self.client.files.upload(file=str(sources.primary_pdf))
-            parts.append(up)
-            uploaded_remote_files.append(up.name)
-
-        # 2. Secondary Source
+                "and diagrams as the primary foundation for the lecture.", sources.primary_pdf))
         if sources.secondary_pdf:
-            parts.append(
-                f"=== SECONDARY SOURCE: Instructor's Supplementary Notes ({sources.secondary_pdf.name}) ===\n"
+            source_entries.append(("SECONDARY SOURCE", f"Instructor's Supplementary Notes ({sources.secondary_pdf.name})",
                 "Use this document to deepen explanations, verify exact technical definitions, "
-                "and fill technical gaps without duplicating already clear primary concepts."
-            )
-            up = self.client.files.upload(file=str(sources.secondary_pdf))
-            parts.append(up)
-            uploaded_remote_files.append(up.name)
-
-        # 3. Tertiary Source
+                "and fill technical gaps without duplicating already clear primary concepts.", sources.secondary_pdf))
         if sources.practice_pdf:
-            parts.append(
-                f"=== TERTIARY SOURCE: Practice Questions ({sources.practice_pdf.name}) ===\n"
+            source_entries.append(("TERTIARY SOURCE", f"Practice Questions ({sources.practice_pdf.name})",
                 "Select 3 to 5 realistic, conceptual interview/self-check questions from this document. "
-                "Do NOT invent questions."
-            )
-            up = self.client.files.upload(file=str(sources.practice_pdf))
-            parts.append(up)
-            uploaded_remote_files.append(up.name)
+                "Do NOT invent questions.", sources.practice_pdf))
+
+        try:
+            for tag, label, instruction, pdf_path in source_entries:
+                parts.append(f"=== {tag}: {label} ===\n{instruction}")
+                up = self.client.files.upload(file=str(pdf_path))
+                parts.append(up)
+                uploaded_remote_files.append(up.name)
+        except Exception:
+            # Clean up any files already uploaded before this failure
+            if uploaded_remote_files:
+                self.cleanup_remote_files(uploaded_remote_files)
+            raise
 
         return parts, uploaded_remote_files
 
@@ -225,8 +264,9 @@ class GeminiClient:
             f"BOOK PROGRESS & BUDGET:\n"
             f"- Total pages generated so far: {pages_so_far}\n"
             f"- Lectures remaining including this one: {remaining_lectures}\n"
-            f"- TARGET LENGTH FOR THIS LECTURE: {target_pages} pages.\n"
-            f"  (Keep text dense, concise, and compact so it cleanly renders within {target_pages} pages.)\n\n"
+            f"- APPROXIMATE page guidance for this lecture: ~{target_pages} pages.\n"
+            f"  (This is editorial guidance, not a hard limit. Prioritize content completeness\n"
+            f"   and technical accuracy. Easy topics may need fewer pages; complex topics may need more.)\n\n"
             f"PREVIOUSLY COVERED HEADINGS (Do NOT re-explain these; cross-reference if needed):\n"
             f"{headings_preview}\n\n"
             "Produce output strictly matching the formatting rules with <notes_html> and <issues>."
@@ -250,13 +290,30 @@ class GeminiClient:
                 and self.config.fallback_model.strip() not in models_to_try
             ):
                 models_to_try.append(self.config.fallback_model.strip())
+            if (
+                self.config.fallback_model_2
+                and self.config.fallback_model_2.strip()
+                and self.config.fallback_model_2.strip() not in models_to_try
+            ):
+                models_to_try.append(self.config.fallback_model_2.strip())
+
+            # Ensure cooldown tracker is initialized even if __new__ was called directly
+            if not hasattr(self, "_cooldown") or self._cooldown is None:
+                self._cooldown = ModelCooldownTracker()
 
             response_text: Optional[str] = None
             model_failures: Dict[str, str] = {}
+            key_hint = self.config.api_key[:4] + "****" if self.config.api_key else "????"
 
             for model_name in models_to_try:
-                is_primary = (model_name == self.config.primary_model)
-                role = "Primary" if is_primary else "Fallback"
+                # Check cooldown
+                if not self._cooldown.is_cooled_down(model_name):
+                    print(f"[INFO] Skipping model '{model_name}' (still in cooldown).")
+                    model_failures[model_name] = "Skipped (cooldown active)"
+                    continue
+
+                role_idx = models_to_try.index(model_name)
+                role = "Primary" if role_idx == 0 else f"Fallback-{role_idx}"
                 print(f"[INFO] Requesting Lecture {lecture_num} generation using {role} model: {model_name}...")
 
                 model_succeeded = False
@@ -270,56 +327,66 @@ class GeminiClient:
                         # Check finish reason and response
                         self._validate_raw_response(resp)
                         response_text = resp.text or ""
+                        self._cooldown.clear(model_name)
                         model_succeeded = True
                         break
                     except Exception as e:
-                        retriable, reason = is_retriable_error(e)
+                        retriable, reason, quota_exhausted = is_retriable_error(e)
                         err_msg = getattr(e, "message", None) or str(e)
                         model_failures[model_name] = f"{reason} — {err_msg}"
 
+                        if quota_exhausted:
+                            print(
+                                f"[ERROR] Quota exhausted for {model_name}, skipping remaining retries."
+                            )
+                            self._cooldown.mark_failed(model_name)
+                            break
+
                         if retriable and attempt < self.config.max_retries:
-                            wait = calculate_backoff(attempt, self.config.initial_backoff_sec)
+                            wait = calculate_backoff(attempt, self.config.initial_backoff_sec, self.config.max_backoff_sec)
                             print(
                                 f"[WARN] Temporary error on {role} model '{model_name}' ({reason}). "
                                 f"Retrying in {wait}s (attempt {attempt}/{self.config.max_retries})..."
                             )
                             time.sleep(wait)
+                        elif retriable:
+                            print(
+                                f"[ERROR] {role} model '{model_name}' exhausted all "
+                                f"{self.config.max_retries} retries ({reason})."
+                            )
+                            self._cooldown.mark_failed(model_name)
+                            break
                         else:
-                            if retriable:
-                                print(
-                                    f"[ERROR] {role} model '{model_name}' exhausted all "
-                                    f"{self.config.max_retries} retries ({reason})."
-                                )
-                            else:
-                                print(
-                                    f"[ERROR] Permanent error on {role} model '{model_name}': {reason}. "
-                                    f"Skipping retries for this model."
-                                )
+                            print(
+                                f"[ERROR] Permanent error on {role} model '{model_name}': {reason}. "
+                                f"Skipping retries for this model."
+                            )
                             break
 
-                if model_succeeded and response_text:
+                if model_succeeded and response_text is not None:
                     print(f"[SUCCESS] Generation succeeded using {role} model: {model_name}")
                     break
 
-            if not response_text:
-                summary_lines = [
-                    f"  - Model '{m}': {fail_reason}"
-                    for m, fail_reason in model_failures.items()
-                ]
-                summary_str = "\n".join(summary_lines)
-                print(f"\n[ERROR] Generation failed for Lecture {lecture_num}. All attempted models failed:\n{summary_str}\n")
-                raise RuntimeError(
-                    f"Failed to generate Lecture {lecture_num} after trying models {models_to_try}.\n"
-                    f"Failure details per model:\n{summary_str}"
-                )
+            if response_text is not None:
+                # Save raw output
+                raw_path = work_dir / f"lecture_{lecture_num:02d}_raw.txt"
+                raw_path.write_text(response_text, encoding="utf-8")
 
-            # Save raw output
-            raw_path = work_dir / f"lecture_{lecture_num:02d}_raw.txt"
-            raw_path.write_text(response_text, encoding="utf-8")
+                # Extract & Validate
+                body = self.extract_and_validate_notes(response_text, lecture_num)
+                return body
 
-            # Extract & Validate
-            body = self.extract_and_validate_notes(response_text, lecture_num)
-            return body
+            # All models failed
+            summary_lines = [
+                f"  - Model '{m}': {fail_reason}"
+                for m, fail_reason in model_failures.items()
+            ]
+            summary_str = "\n".join(summary_lines)
+            print(f"\n[ERROR] Generation failed for Lecture {lecture_num}. All attempted models failed:\n{summary_str}\n")
+            raise RuntimeError(
+                f"Failed to generate Lecture {lecture_num} after trying models {models_to_try}.\n"
+                f"Failure details per model:\n{summary_str}"
+            )
 
         finally:
             # Always clean up remote uploaded files

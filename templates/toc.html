@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Table of Contents</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 18mm 16mm 18mm 16mm;
+      @bottom-center {
+        content: counter(page, lower-roman);
+        font-family: "Segoe UI", sans-serif;
+        font-size: 8.5pt;
+        color: #475569;
+      }
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+      font-size: 9.2pt;
+      line-height: 1.35;
+      color: #0f172a;
+      background: #ffffff;
+    }
+    h1.toc-heading {
+      font-size: 20pt;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      color: #0f172a;
+      border-bottom: 2pt solid #0f172a;
+      padding-bottom: 4pt;
+      margin-bottom: 12pt;
+      text-transform: uppercase;
+    }
+    .toc-part-title {
+      font-size: 10.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #15803d;
+      background: #f8fafc;
+      border-left: 3pt solid #16a34a;
+      padding: 3pt 6pt;
+      margin-top: 10pt;
+      margin-bottom: 4pt;
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+    .toc-entry {
+      display: flex;
+      align-items: baseline;
+      margin: 2.2pt 0;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .toc-entry.lecture-entry {
+      font-weight: 600;
+      color: #0f172a;
+      margin-top: 3.5pt;
+    }
+    .toc-entry.section-entry {
+      font-size: 8.4pt;
+      font-weight: 400;
+      color: #475569;
+      padding-left: 14pt;
+      margin: 1.2pt 0;
+    }
+    .toc-title {
+      flex-shrink: 0;
+      max-width: 82%;
+    }
+    .toc-dots {
+      flex-grow: 1;
+      border-bottom: 1px dotted #94a3b8;
+      margin: 0 5pt;
+      position: relative;
+      top: -2pt;
+    }
+    .toc-page {
+      flex-shrink: 0;
+      font-weight: 600;
+      color: #0f172a;
+      text-align: right;
+      min-width: 24pt;
+      font-variant-numeric: tabular-nums;
+    }
+    .toc-entry.section-entry .toc-page {
+      font-weight: 400;
+      color: #64748b;
+    }
+    .page-break {
+      page-break-before: always;
+      break-before: page;
+    }
+    .toc-note {
+      font-size: 8pt;
+      font-style: italic;
+      color: #64748b;
+      margin-bottom: 10pt;
+    }
+  </style>
+</head>
+<body>
+  <h1 class="toc-heading">Table of Contents</h1>
+  <p class="toc-note">Page numbers reflect the continuous printed reference pagination of the course curriculum.</p>
+
+  {{TOC_CONTENT}}
+
+</body>
+</html>

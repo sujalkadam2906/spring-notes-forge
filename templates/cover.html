@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Cover</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 0;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+      background: #ffffff;
+      color: #111827;
+      width: 210mm;
+      height: 297mm;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 24mm 22mm 20mm 22mm;
+    }
+    .top-accent {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 8mm;
+      background: #1e293b;
+      border-bottom: 2.5mm solid #16a34a;
+    }
+    .series-badge {
+      display: inline-block;
+      text-transform: uppercase;
+      font-size: 8.5pt;
+      font-weight: 700;
+      letter-spacing: 2.5px;
+      color: #16a34a;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      padding: 4px 14px;
+      border-radius: 3px;
+      margin-top: 4mm;
+      margin-bottom: 8mm;
+    }
+    .title-block {
+      margin-top: 4mm;
+    }
+    h1.main-title {
+      font-size: 38pt;
+      font-weight: 800;
+      line-height: 1.05;
+      color: #0f172a;
+      letter-spacing: -0.5px;
+      margin-bottom: 5mm;
+    }
+    h1.main-title span.accent {
+      color: #15803d;
+      display: block;
+    }
+    p.subtitle {
+      font-size: 14pt;
+      font-weight: 400;
+      line-height: 1.45;
+      color: #475569;
+      max-width: 155mm;
+      margin-bottom: 10mm;
+    }
+    .divider-line {
+      width: 45mm;
+      height: 3px;
+      background: #16a34a;
+      margin-bottom: 12mm;
+    }
+    .features-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5mm 8mm;
+      max-width: 160mm;
+      margin-top: 2mm;
+    }
+    .feature-item {
+      font-size: 9.2pt;
+      color: #334155;
+      line-height: 1.35;
+      display: flex;
+      align-items: flex-start;
+    }
+    .feature-item::before {
+      content: "▪";
+      color: #16a34a;
+      font-size: 12pt;
+      margin-right: 7px;
+      line-height: 1;
+    }
+    .center-visual {
+      position: absolute;
+      right: 18mm;
+      top: 95mm;
+      opacity: 0.85;
+    }
+    .footer-block {
+      border-top: 1px solid #e2e8f0;
+      padding-top: 8mm;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+    .meta-author {
+      font-size: 10.5pt;
+      font-weight: 600;
+      color: #0f172a;
+    }
+    .meta-author span {
+      display: block;
+      font-size: 8.5pt;
+      font-weight: 400;
+      color: #64748b;
+      margin-top: 1.5mm;
+    }
+    .meta-edition {
+      text-align: right;
+      font-size: 8.5pt;
+      font-weight: 600;
+      color: #475569;
+      letter-spacing: 0.5px;
+    }
+    .meta-edition span {
+      display: block;
+      color: #94a3b8;
+      font-weight: 400;
+      font-size: 8pt;
+      margin-top: 1.5mm;
+    }
+  </style>
+</head>
+<body>
+  <div class="top-accent"></div>
+
+  <div>
+    <div class="series-badge">CODER ARMY MASTER ENGINEERING SERIES</div>
+    <div class="title-block">
+      <h1 class="main-title">
+        SPRING BOOT
+        <span class="accent">Master Study Notes &amp; Interview Guide</span>
+      </h1>
+      <p class="subtitle">
+        A Rigorous, Concept-First Architecture Reference from Core Inversion of Control to High-Performance Microservices, Security, and Production Testing
+      </p>
+      <div class="divider-line"></div>
+    </div>
+
+    <!-- Subtle Technical Leaf / Spring Graphic -->
+    <div class="center-visual">
+      <svg width="140" height="140" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="50" cy="50" r="46" stroke="#e2e8f0" stroke-width="2" stroke-dasharray="4 3"/>
+        <path d="M50 18 C30 35 30 65 50 82 C70 65 70 35 50 18 Z" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.5"/>
+        <path d="M50 25 L50 75" stroke="#15803d" stroke-width="2"/>
+        <path d="M50 38 L60 32" stroke="#15803d" stroke-width="1.8"/>
+        <path d="M50 48 L40 42" stroke="#15803d" stroke-width="1.8"/>
+        <path d="M50 58 L60 52" stroke="#15803d" stroke-width="1.8"/>
+        <path d="M50 68 L40 62" stroke="#15803d" stroke-width="1.8"/>
+      </svg>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-item"><strong>Complete 40-Lecture Curriculum</strong>&nbsp;with strict continuous pagination</div>
+      <div class="feature-item"><strong>Clean Black &amp; White SVGs</strong>&nbsp;illustrating internal runtime mechanics</div>
+      <div class="feature-item"><strong>Dependency Injection &amp; Lifecycle</strong>&nbsp;demystified step-by-step</div>
+      <div class="feature-item"><strong>Hibernate, JPA &amp; Transactions</strong>&nbsp;with zero-leakage persistence</div>
+      <div class="feature-item"><strong>Spring Security, Filters &amp; JWT</strong>&nbsp;authentication pipelines</div>
+      <div class="feature-item"><strong>Comprehensive Revision Sheets</strong>&nbsp;and high-yield comparison tables</div>
+      <div class="feature-item"><strong>100+ Interview Theory Questions</strong>&nbsp;with deep conceptual rationale</div>
+      <div class="feature-item"><strong>Complete Practical Workbook</strong>&nbsp;with verified, compilable Java solutions</div>
+    </div>
+  </div>
+
+  <div class="footer-block">
+    <div class="meta-author">
+      {{AUTHOR}}
+      <span>Lead Technical Author &amp; Systems Architecture Team</span>
+    </div>
+    <div class="meta-edition">
+      {{EDITION}}
+      <span>Spring Boot 3.x &amp; Java 17/21 Baseline</span>
+    </div>
+  </div>
+</body>
+</html>

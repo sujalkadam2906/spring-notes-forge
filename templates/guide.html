@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>How to Use This Book</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 20mm 18mm 20mm 18mm;
+      @bottom-center {
+        content: counter(page, lower-roman);
+        font-family: "Segoe UI", sans-serif;
+        font-size: 8.5pt;
+        color: #475569;
+      }
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+      font-size: 10pt;
+      line-height: 1.42;
+      color: #0f172a;
+      background: #ffffff;
+    }
+    h1 {
+      font-size: 18pt;
+      font-weight: 800;
+      color: #0f172a;
+      border-bottom: 1.5pt solid #0f172a;
+      padding-bottom: 3pt;
+      margin-bottom: 8pt;
+    }
+    h2 {
+      font-size: 12pt;
+      font-weight: 700;
+      color: #15803d;
+      margin-top: 10pt;
+      margin-bottom: 3pt;
+      break-after: avoid;
+    }
+    p {
+      margin: 3.5pt 0;
+    }
+    ul, ol {
+      margin: 3pt 0 6pt 16pt;
+    }
+    li {
+      margin: 2pt 0;
+    }
+    .box {
+      border: 1px solid #cbd5e1;
+      border-left: 3pt solid #16a34a;
+      background: #f8fafc;
+      padding: 6pt 10pt;
+      margin: 8pt 0;
+      font-size: 9.3pt;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8pt;
+      margin: 6pt 0;
+    }
+    .card {
+      border: 1px solid #e2e8f0;
+      padding: 6pt 8pt;
+      background: #fff;
+      font-size: 9pt;
+    }
+    .card strong {
+      display: block;
+      color: #0f172a;
+      margin-bottom: 2pt;
+    }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 9pt;
+      background: #f1f5f9;
+      padding: 1pt 3pt;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+  <h1>How to Use This Book</h1>
+  <p>Welcome to the <strong>Spring Boot Master Study Notes &amp; Interview Guide</strong>. This technical reference was compiled to transform complex, multi-layered enterprise Java engineering into clear, foundational, interview-ready knowledge.</p>
+
+  <div class="box">
+    <strong>Pedagogical Framework: The 5-Dimension Concept Architecture</strong><br>
+    Every major framework concept in this book answers five specific questions:
+    <strong>(1) What it is</strong> (plain English definition),
+    <strong>(2) Why it is needed</strong> (exact real-world failure mode or bottleneck it solves),
+    <strong>(3) How it works internally</strong> (container lifecycle, bytecode proxying, or servlet pipeline mechanics),
+    <strong>(4) Where it fits in the architecture</strong>, and
+    <strong>(5) Minimal compilable code or comparison tables</strong>.
+  </div>
+
+  <h2>1. Three Tailored Reading Tracks</h2>
+  <div class="grid">
+    <div class="card">
+      <strong>Track A: Complete Mastery (Lectures 1–40)</strong>
+      For developers building enterprise web systems from scratch. Follow the 40 lectures sequentially from Core IoC (Lectures 1–8), REST MVC (9–21), AOP (22–25), Data Access &amp; JPA (26–34), to Spring Security &amp; JWT (35–38), and OAuth2/Testing (39–40).
+    </div>
+    <div class="card">
+      <strong>Track B: 7-Day Interview Cram</strong>
+      Skip directly to the <strong>Revision Sheets</strong> (Part VII) for high-yield concept maps and comparison tables, followed by the <strong>Interview Theory</strong> (Part VIII) and <strong>Interview Practical Workbook</strong> (Part IX).
+    </div>
+  </div>
+
+  <h2>2. Understanding Continuous Pagination</h2>
+  <p>This master volume uses a strict two-tier pagination system designed for both physical print and digital navigation:</p>
+  <ul>
+    <li><strong>Printed Page Labels (Pages 1–238):</strong> Printed in the bottom center of each lecture page. All cross-references, table of contents entries, and lecture self-checks cite these exact numbers.</li>
+    <li><strong>Physical PDF Pages:</strong> The PDF reader’s page index includes the unnumbered cover and Roman-numeraled front matter (Cover = Physical Page 1, Contents = Physical Page 2, etc.).</li>
+  </ul>
+
+  <h2>3. Visual Architecture Diagrams</h2>
+  <p>All diagrams in this book are rendered in vector SVG without low-resolution screen captures. Rectangles represent Spring-managed components or runtime objects; solid arrows represent direct dependency or call execution; dashed arrows represent lifecycle callbacks or proxy delegations.</p>
+
+  <h2>4. Modern Spring Boot 3.x Baseline</h2>
+  <p>All code listings reflect the canonical standards of <strong>Spring Boot 3.x</strong> and <strong>Java 17/21</strong>. Wherever older patterns appear (e.g. legacy XML configuration or obsolete security adapters), explicit callout notes explain the historical context and demonstrate the modern replacement.</p>
+</body>
+</html>

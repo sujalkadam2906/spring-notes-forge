@@ -57,11 +57,14 @@ Avoid verbose textbook prose. Be dense, direct, and clear.
 
 ## 4. Page Budget & Density Discipline
 
-- The entire 40-lecture book has a strict ceiling of **125 pages** (target: **105–115 pages**).
-- Lectures must strictly fit their assigned budget:
-  - Standard lectures: **2 to 3 pages** (~900–1,500 words total).
-  - Difficult/dense lectures: **4 to 5 pages** (~1,800–2,500 words total).
+- The entire 40-lecture book has an approximate editorial estimate of **105–120 pages**.
+- **Content completeness and technical accuracy always take priority over page count.**
+- Use the per-lecture page guidance as an approximate target, not a hard constraint:
   - Easy/tooling lectures: **1 to 2 pages** (~500–900 words total).
+  - Standard lectures: **2 to 3 pages** (~900–1,500 words total).
+  - Difficult/dense lectures: **4 to 6 pages** if genuinely needed to cover all important concepts.
+- **Never add filler** to reach a page count.
+- **Never remove important concepts** just to fit a page count.
 - Cut unnecessary narrative filler, introductory pleasantries, and duplicate explanations. Every sentence must provide educational value.
 
 ---

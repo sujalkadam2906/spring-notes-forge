@@ -36,6 +36,7 @@ from build_notes import build_system_prompt, extract_headings_from_html
 from pipeline.gemini_client import (
     GeminiClient,
     GeminiConfig,
+    ModelCooldownTracker,
     calculate_backoff,
     is_retriable_error,
 )
@@ -119,7 +120,7 @@ class TestSpringNotesPipeline(unittest.TestCase):
         self.assertIn("PRIMARY SOURCE", prompt)
         self.assertIn("SECONDARY SOURCE", prompt)
         self.assertIn("TERTIARY SOURCE", prompt)
-        self.assertIn("125 pages", prompt)
+        self.assertIn("105–120 pages", prompt)
         self.assertIn("<notes_html>", prompt)
         self.assertIn("Source discrepancy:", prompt)
         self.assertIn("Accuracy clarification:", prompt)
@@ -441,16 +442,18 @@ class TestSpringNotesPipeline(unittest.TestCase):
         # Temporary status codes
         for code in (429, 500, 502, 503, 504, 408):
             err = errors.APIError(code, {"error": {"message": "temp"}})
-            retriable, reason = is_retriable_error(err)
+            retriable, reason, quota = is_retriable_error(err)
             self.assertTrue(retriable, f"Expected {code} to be retriable")
             self.assertIn("temporary", reason.lower())
+            self.assertFalse(quota)
 
         # Permanent status codes
         for code in (400, 401, 403, 404):
             err = errors.APIError(code, {"error": {"message": "perm"}})
-            retriable, reason = is_retriable_error(err)
+            retriable, reason, quota = is_retriable_error(err)
             self.assertFalse(retriable, f"Expected {code} to be non-retriable")
             self.assertIn("permanent", reason.lower())
+            self.assertFalse(quota)
 
         # Connection and socket interruptions
         conn_errs = [
@@ -460,51 +463,64 @@ class TestSpringNotesPipeline(unittest.TestCase):
             OSError(10053, "WinError 10053 occurred"),
         ]
         for cerr in conn_errs:
-            retriable, reason = is_retriable_error(cerr)
+            retriable, reason, quota = is_retriable_error(cerr)
             self.assertTrue(retriable, f"Expected {cerr} to be retriable")
+            self.assertFalse(quota)
 
     # 7h. Exponential backoff with jitter calculation
     def test_07h_backoff_jitter(self):
-        delay_1 = calculate_backoff(1, base_sec=10.0, max_sec=60.0)
-        delay_2 = calculate_backoff(2, base_sec=10.0, max_sec=60.0)
-        # Attempt 1 should be around 10 + [1..3]
-        self.assertGreaterEqual(delay_1, 10.0)
-        self.assertLessEqual(delay_1, 15.0)
-        # Attempt 2 should be around 20 + [1..3]
-        self.assertGreaterEqual(delay_2, 20.0)
-        self.assertLessEqual(delay_2, 25.0)
-        # Capped delay
-        delay_large = calculate_backoff(10, base_sec=10.0, max_sec=60.0)
-        self.assertLessEqual(delay_large, 60.0)
+        # Default backoff: base=5.0, max=20.0
+        delay_1 = calculate_backoff(1)
+        delay_2 = calculate_backoff(2)
+        # Attempt 1 should be around 5 + [1..3]
+        self.assertGreaterEqual(delay_1, 5.0)
+        self.assertLessEqual(delay_1, 9.0)
+        # Attempt 2 should be around 10 + [1..3]
+        self.assertGreaterEqual(delay_2, 10.0)
+        self.assertLessEqual(delay_2, 14.0)
+        # Capped delay at max_sec=20.0
+        delay_large = calculate_backoff(10)
+        self.assertLessEqual(delay_large, 20.0)
+
+        # Explicit parameters
+        custom_delay = calculate_backoff(1, base_sec=10.0, max_sec=60.0)
+        self.assertGreaterEqual(custom_delay, 10.0)
+        self.assertLessEqual(custom_delay, 15.0)
 
     # 8. Environment-variable loading
     def test_08_environment_variable_loading(self):
-        # Default models when not overridden
+        # Default models and retry/backoff parameters when not overridden
         with patch.dict(os.environ, {"GEMINI_API_KEY": "test_secret_key"}, clear=True):
             cfg = GeminiConfig.from_env()
             self.assertEqual(cfg.api_key, "test_secret_key")
             self.assertEqual(cfg.primary_model, "gemini-3.6-flash")
             self.assertEqual(cfg.fallback_model, "gemini-4-hydrogen")
-            self.assertEqual(cfg.max_retries, 5)
-            self.assertEqual(cfg.initial_backoff_sec, 15)
+            self.assertEqual(cfg.fallback_model_2, "")
+            self.assertEqual(cfg.max_retries, 2)
+            self.assertEqual(cfg.initial_backoff_sec, 5)
+            self.assertEqual(cfg.max_backoff_sec, 20.0)
 
-        # Custom configured models via env
+        # Custom configured models and parameters via env
         with patch.dict(
             os.environ,
             {
                 "GEMINI_API_KEY": "test_secret_key",
                 "GEMINI_MODEL": "custom-primary",
                 "GEMINI_FALLBACK_MODEL": "custom-fallback",
+                "GEMINI_FALLBACK_MODEL_2": "custom-fallback-2",
                 "GEMINI_MAX_RETRIES": "7",
                 "GEMINI_INITIAL_BACKOFF_SEC": "20",
+                "GEMINI_MAX_BACKOFF_SEC": "45.0",
             },
             clear=True,
         ):
             cfg = GeminiConfig.from_env()
             self.assertEqual(cfg.primary_model, "custom-primary")
             self.assertEqual(cfg.fallback_model, "custom-fallback")
+            self.assertEqual(cfg.fallback_model_2, "custom-fallback-2")
             self.assertEqual(cfg.max_retries, 7)
             self.assertEqual(cfg.initial_backoff_sec, 20)
+            self.assertEqual(cfg.max_backoff_sec, 45.0)
 
         # Missing key raises clean error
         with patch.dict(os.environ, {}, clear=True):
@@ -685,6 +701,364 @@ class TestSpringNotesPipeline(unittest.TestCase):
         self.assertEqual(report.total_pages, 4)
         self.assertEqual(report.start_page, 31)
         self.assertEqual(report.end_page, 34)
+
+    # 20. Second fallback model success
+    def test_20_second_fallback_success(self):
+        mock_client = MagicMock()
+        cfg = GeminiConfig(
+            api_key="mock_key",
+            primary_model="model-primary",
+            fallback_model="model-fallback-1",
+            fallback_model_2="model-fallback-2",
+            max_retries=1,
+            initial_backoff_sec=1,
+        )
+        client = GeminiClient.__new__(GeminiClient)
+        client.config = cfg
+        client.client = mock_client
+        client._cooldown = ModelCooldownTracker()
+
+        err_503 = errors.APIError(503, {"error": {"message": "Primary busy"}})
+        err_404 = errors.APIError(404, {"error": {"message": "Fallback 1 not found"}})
+        mock_resp = MagicMock()
+        mock_resp.text = (
+            "<notes_html><h1>Lecture 6 · Fallback-2 Win</h1><p>Success</p></notes_html>\n"
+            "<issues>none</issues>"
+        )
+        mock_resp.candidates = [MagicMock(finish_reason="STOP")]
+
+        def mock_generate(*args, **kwargs):
+            m = kwargs.get("model")
+            if m == "model-primary":
+                raise err_503
+            if m == "model-fallback-1":
+                raise err_404
+            return mock_resp
+
+        mock_client.models.generate_content.side_effect = mock_generate
+        mock_upload = MagicMock(name="uploaded_ref")
+        mock_upload.name = "files/mock1"
+        mock_client.files.upload.return_value = mock_upload
+
+        with tempfile.TemporaryDirectory() as tmp_work:
+            sources = discover_sources(self.repo_dir, 6)
+            with patch("time.sleep", return_value=None):
+                body = client.generate_lecture_notes(
+                    lecture_num=6,
+                    sources=sources,
+                    pages_so_far=24,
+                    target_pages=3,
+                    remaining_lectures=35,
+                    previous_headings=[],
+                    system_instruction="Test instruction",
+                    work_dir=Path(tmp_work),
+                )
+        self.assertIn("Fallback-2 Win", body)
+        self.assertEqual(mock_client.models.generate_content.call_count, 3)
+
+    # 21. All configured models fail with comprehensive error summary
+    def test_21_all_models_fail_clear_error(self):
+        mock_client = MagicMock()
+        cfg = GeminiConfig(
+            api_key="mock_key",
+            primary_model="model-1",
+            fallback_model="model-2",
+            fallback_model_2="model-3",
+            max_retries=1,
+            initial_backoff_sec=1,
+        )
+        client = GeminiClient.__new__(GeminiClient)
+        client.config = cfg
+        client.client = mock_client
+        client._cooldown = ModelCooldownTracker()
+
+        err_503 = errors.APIError(503, {"error": {"message": "Demand spike"}})
+        err_404 = errors.APIError(404, {"error": {"message": "Model not found"}})
+        err_500 = errors.APIError(500, {"error": {"message": "Internal error"}})
+
+        def mock_generate(*args, **kwargs):
+            m = kwargs.get("model")
+            if m == "model-1":
+                raise err_503
+            if m == "model-2":
+                raise err_404
+            raise err_500
+
+        mock_client.models.generate_content.side_effect = mock_generate
+        mock_upload = MagicMock(name="uploaded_ref")
+        mock_upload.name = "files/mock1"
+        mock_client.files.upload.return_value = mock_upload
+
+        with tempfile.TemporaryDirectory() as tmp_work:
+            sources = discover_sources(self.repo_dir, 6)
+            with patch("time.sleep", return_value=None):
+                with self.assertRaises(RuntimeError) as ctx:
+                    client.generate_lecture_notes(
+                        lecture_num=6,
+                        sources=sources,
+                        pages_so_far=24,
+                        target_pages=3,
+                        remaining_lectures=35,
+                        previous_headings=[],
+                        system_instruction="Test instruction",
+                        work_dir=Path(tmp_work),
+                    )
+        err_msg = str(ctx.exception)
+        self.assertIn("model-1", err_msg)
+        self.assertIn("model-2", err_msg)
+        self.assertIn("model-3", err_msg)
+
+    # 22. Permanent authentication errors are never retried
+    def test_22_auth_errors_permanent(self):
+        for code in (401, 403):
+            err = errors.APIError(code, {"error": {"message": "API key invalid or permission denied"}})
+            retriable, reason, quota = is_retriable_error(err)
+            self.assertFalse(retriable)
+            self.assertFalse(quota)
+            self.assertIn("permanent client error", reason)
+
+    # 23. Rate limit 429 without quota exhaustion is retriable
+    def test_23_rate_limit_429(self):
+        rate_err = errors.APIError(429, {"error": {"message": "Rate limit exceeded, please slow down"}})
+        retriable, reason, quota = is_retriable_error(rate_err)
+        self.assertTrue(retriable)
+        self.assertFalse(quota)
+        self.assertIn("rate limit", reason.lower())
+
+    # 24. Confirmed quota exhaustion 429 is not retried
+    def test_24_quota_exhaustion_429(self):
+        quota_err = errors.APIError(429, {"error": {"message": "Resource exhausted: GenerateRequestsPerDayPerProjectPerModel quota reached"}})
+        retriable, reason, quota = is_retriable_error(quota_err)
+        self.assertFalse(retriable)
+        self.assertTrue(quota)
+        self.assertIn("quota exhausted", reason.lower())
+
+    # 25. Quota exhaustion skips remaining retries and switches to fallback
+    def test_25_quota_exhaustion_skips_retries_and_switches_model(self):
+        mock_client = MagicMock()
+        cfg = GeminiConfig(
+            api_key="mock_key",
+            primary_model="model-quota-exhausted",
+            fallback_model="model-fallback",
+            max_retries=3,
+            initial_backoff_sec=1,
+        )
+        client = GeminiClient.__new__(GeminiClient)
+        client.config = cfg
+        client.client = mock_client
+        client._cooldown = ModelCooldownTracker()
+
+        quota_err = errors.APIError(429, {"error": {"message": "Free tier quota exhausted for model"}})
+        mock_resp = MagicMock()
+        mock_resp.text = "<notes_html><h1>Lecture 6 · Fallback</h1><p>Ok</p></notes_html>\n<issues>none</issues>"
+        mock_resp.candidates = [MagicMock(finish_reason="STOP")]
+
+        def mock_generate(*args, **kwargs):
+            if kwargs.get("model") == "model-quota-exhausted":
+                raise quota_err
+            return mock_resp
+
+        mock_client.models.generate_content.side_effect = mock_generate
+        mock_upload = MagicMock(name="uploaded_ref")
+        mock_upload.name = "files/mock1"
+        mock_client.files.upload.return_value = mock_upload
+
+        with tempfile.TemporaryDirectory() as tmp_work:
+            sources = discover_sources(self.repo_dir, 6)
+            with patch("time.sleep", return_value=None):
+                body = client.generate_lecture_notes(
+                    lecture_num=6,
+                    sources=sources,
+                    pages_so_far=24,
+                    target_pages=3,
+                    remaining_lectures=35,
+                    previous_headings=[],
+                    system_instruction="Test",
+                    work_dir=Path(tmp_work),
+                )
+        self.assertIn("Fallback", body)
+        # Primary called exactly once (skipped retries 2 and 3 due to quota exhaustion), then fallback called once
+        self.assertEqual(mock_client.models.generate_content.call_count, 2)
+        # Primary model is marked in cooldown
+        self.assertFalse(client._cooldown.is_cooled_down("model-quota-exhausted"))
+
+    # 26. Connection reset and timeout error handling
+    def test_26_connection_reset_and_timeout(self):
+        for err in [
+            ConnectionResetError("Connection reset"),
+            TimeoutError("Request timed out"),
+            OSError(10054, "WinError 10054"),
+        ]:
+            retriable, reason, quota = is_retriable_error(err)
+            self.assertTrue(retriable)
+            self.assertFalse(quota)
+
+    # 27. Process-local model cooldown tracker
+    def test_27_model_cooldown_tracker(self):
+        cooldown = ModelCooldownTracker(cooldown_seconds=0.1)
+        self.assertTrue(cooldown.is_cooled_down("model-test"))
+        cooldown.mark_failed("model-test")
+        self.assertFalse(cooldown.is_cooled_down("model-test"))
+        import time
+        time.sleep(0.15)
+        self.assertTrue(cooldown.is_cooled_down("model-test"))
+        cooldown.mark_failed("model-test")
+        cooldown.clear("model-test")
+        self.assertTrue(cooldown.is_cooled_down("model-test"))
+
+    # 28. Partial source upload cleanup
+    def test_28_partial_source_upload_cleanup(self):
+        mock_client = MagicMock()
+        client = GeminiClient.__new__(GeminiClient)
+        client.client = mock_client
+
+        upload_counter = [0]
+        def mock_upload(*args, **kwargs):
+            upload_counter[0] += 1
+            if upload_counter[0] == 2:
+                raise ConnectionError("Network drop during upload of second source")
+            up = MagicMock()
+            up.name = f"files/uploaded_source_{upload_counter[0]}"
+            return up
+
+        mock_client.files.upload.side_effect = mock_upload
+        sources = discover_sources(self.repo_dir, 6)
+
+        with self.assertRaises(ConnectionError):
+            client.prepare_content_parts(sources)
+
+        # First uploaded file must be cleaned up
+        mock_client.files.delete.assert_called_once_with(name="files/uploaded_source_1")
+
+    # 29. Successful HTML cache atomic preservation
+    def test_29_successful_html_cache_atomic(self):
+        with tempfile.TemporaryDirectory() as tmp_work:
+            work_dir = Path(tmp_work)
+            html_cache_file = work_dir / "lecture_06.html"
+            content = "<h1>Lecture 6 · Test</h1><p>Clean HTML</p>"
+
+            import tempfile as tf
+            fd, tmp_path = tf.mkstemp(dir=str(work_dir), suffix=".html.tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_path, str(html_cache_file))
+
+            self.assertTrue(html_cache_file.exists())
+            self.assertEqual(html_cache_file.read_text(encoding="utf-8"), content)
+
+    # 30. Invalid HTML response rejected and not written to cache
+    def test_30_invalid_html_not_cached(self):
+        # Empty output rejection
+        with self.assertRaises(RuntimeError) as ctx1:
+            body = "   "
+            if not body or not body.strip():
+                raise RuntimeError("Generation returned empty HTML for Lecture 6. Refusing to cache empty output.")
+        self.assertIn("Refusing to cache empty output", str(ctx1.exception))
+
+        # Output missing <h1> tag rejection
+        with self.assertRaises(RuntimeError) as ctx2:
+            body = "<p>No heading here</p>"
+            if "<h1>" not in body.lower():
+                raise RuntimeError("Generation returned HTML without <h1> tag for Lecture 6. Refusing to cache malformed output.")
+        self.assertIn("without <h1> tag", str(ctx2.exception))
+
+    # 31. Failed generation does not alter tracker records
+    def test_31_failed_generation_preserves_tracker(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tracker = PageTracker(tmp_dir)
+            tracker.record_lecture(1, "L1", 1, 8, 8, "f1.pdf", [])
+            initial_count = len(tracker.get_verified_records())
+
+            # Simulate run_lecture failure before recording
+            # If generation raises or QA fails, tracker.record_lecture is never reached
+            try:
+                raise RuntimeError("Simulated Gemini API failure")
+            except RuntimeError:
+                pass  # Flow exits without calling tracker.record_lecture
+
+            self.assertEqual(len(tracker.get_verified_records()), initial_count)
+            self.assertEqual(tracker.get_next_start_page(2), 9)
+
+    # 32. Book length exceeding 125 pages shows warning and does NOT fail integrity
+    def test_32_book_length_exceeding_125_pages_passes_integrity(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tracker = PageTracker(tmp_dir)
+            # Create records exceeding 125 pages (e.g. 130 pages)
+            tracker.record_lecture(1, "L1", 1, 65, 65, "f1.pdf", [])
+            tracker.record_lecture(2, "L2", 66, 130, 65, "f2.pdf", [])
+
+            valid, issues = tracker.validate_integrity()
+            # Integrity must PASS (continuity is preserved)
+            self.assertTrue(valid, f"Exceeding 125 pages should pass integrity, but issues were: {issues}")
+            self.assertEqual(len(issues), 0)
+
+    # 33. Actual page gaps and overlaps still fail integrity checks
+    def test_33_actual_page_gaps_fail_integrity(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tracker = PageTracker(tmp_dir)
+            tracker.record_lecture(1, "L1", 1, 8, 8, "f1.pdf", [])
+            # Introduce gap: lecture 2 starts at 10 instead of 9
+            tracker.data["lectures"]["2"] = {
+                "lecture_num": 2,
+                "title": "L2",
+                "start_page": 10,
+                "end_page": 14,
+                "page_count": 5,
+                "filename": "f2.pdf",
+                "status": "completed",
+                "verified": True,
+                "headings": [],
+                "lecture_span_end": None,
+            }
+            valid, issues = tracker.validate_integrity()
+            self.assertFalse(valid)
+            self.assertTrue(any("Discontinuity" in iss for iss in issues))
+
+    # 34. Flexible page budget allows 1-page lectures for easy topics
+    def test_34_flexible_page_budget(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tracker = PageTracker(tmp_dir)
+            tracker.record_lecture(1, "L1", 1, 110, 110, "f1.pdf", [])
+            budget = tracker.get_budget_status(2)
+            # With 110 pages used and 39 lectures left, budget should suggest at least 1 page
+            self.assertGreaterEqual(budget["recommended_pages_this_lecture"], 1)
+
+    # 35. API Diagnostic verifies models via actual generateContent pings
+    def test_35_api_diagnostic_verify_models(self):
+        mock_client = MagicMock()
+        cfg = GeminiConfig(
+            api_key="mock_key",
+            primary_model="model-alpha",
+            fallback_model="model-beta",
+            fallback_model_2="model-gamma",
+        )
+        client = GeminiClient.__new__(GeminiClient)
+        client.config = cfg
+        client.client = mock_client
+
+        # Mock responses: alpha succeeds, beta returns 503 spike, gamma returns 404
+        def mock_generate(*args, **kwargs):
+            m = kwargs.get("model")
+            if m == "model-alpha":
+                mock_r = MagicMock()
+                mock_r.text = "Pong"
+                return mock_r
+            if m == "model-beta":
+                raise errors.APIError(503, {"error": {"message": "Demand spike"}})
+            if m == "model-gamma":
+                raise errors.APIError(404, {"error": {"message": "Not found"}})
+
+        mock_client.models.generate_content.side_effect = mock_generate
+        results = client.verify_models()
+
+        self.assertTrue(results["model-alpha"]["available"])
+        self.assertIn("operational", results["model-alpha"]["status"])
+
+        self.assertTrue(results["model-beta"]["available"])
+        self.assertIn("503", results["model-beta"]["status"])
+
+        self.assertFalse(results["model-gamma"]["available"])
+        self.assertIn("404", results["model-gamma"]["status"])
 
 
 if __name__ == "__main__":

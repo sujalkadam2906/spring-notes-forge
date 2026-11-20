@@ -1,8 +1,8 @@
 """Persistent Page Tracker and Lecture State Manager.
 
 Ensures continuous page numbering across standalone lecture PDFs, detects
-overlaps or gaps, tracks total page budget against the 115-page target
-(125-page hard limit), and maintains a reusable index of covered headings.
+overlaps or gaps, tracks total page count against the 105–120 page editorial estimate
+(125-page soft warning), and maintains a reusable index of covered headings.
 """
 
 from __future__ import annotations
@@ -259,7 +259,12 @@ class PageTracker:
 
         total_pages = prev_end
         if total_pages > self.HARD_CEILING:
-            issues.append(f"Hard page ceiling exceeded: {total_pages} > {self.HARD_CEILING}")
+            # Soft warning — book exceeding estimate is not an integrity failure
+            print(
+                f"[WARN] Book length ({total_pages} pages) exceeds the {self.HARD_CEILING}-page "
+                f"editorial estimate. This is a warning, not a pagination error."
+            )
+            # Do NOT append to issues — this is not a gap/overlap/integrity failure
 
         return len(issues) == 0, issues
 
@@ -273,12 +278,13 @@ class PageTracker:
         return headings
 
     def get_budget_status(self, current_lecture: int) -> dict:
-        """Calculates pages used, remaining budget, and per-lecture recommended size."""
+        """Calculates pages used and provides editorial guidance (not strict budget)."""
         recs = self.get_verified_records()
         used = max((r.end_page for r in recs), default=0)
         remaining_lectures = max(1, self.TOTAL_LECTURES - current_lecture + 1)
         pages_left = max(0, self.BOOK_TARGET - used)
-        target_per_lec = max(2, round(pages_left / remaining_lectures))
+        # Editorial guidance only — not a hard constraint
+        suggested_per_lec = max(1, round(pages_left / remaining_lectures))
 
         return {
             "pages_used": used,
@@ -286,5 +292,5 @@ class PageTracker:
             "hard_ceiling": self.HARD_CEILING,
             "pages_remaining_to_target": pages_left,
             "lectures_remaining": remaining_lectures,
-            "recommended_pages_this_lecture": target_per_lec,
+            "recommended_pages_this_lecture": suggested_per_lec,
         }

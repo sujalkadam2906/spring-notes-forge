@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Section Divider</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 0;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+      background: #ffffff;
+      color: #0f172a;
+      width: 210mm;
+      height: 297mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 30mm;
+      position: relative;
+    }
+    .accent-bar {
+      width: 50mm;
+      height: 4px;
+      background: #16a34a;
+      margin-bottom: 8mm;
+    }
+    .part-num {
+      font-size: 14pt;
+      font-weight: 700;
+      letter-spacing: 3px;
+      color: #16a34a;
+      text-transform: uppercase;
+      margin-bottom: 4mm;
+    }
+    h1.part-title {
+      font-size: 30pt;
+      font-weight: 800;
+      color: #0f172a;
+      line-height: 1.15;
+      margin-bottom: 6mm;
+      max-width: 150mm;
+    }
+    p.part-desc {
+      font-size: 11.5pt;
+      color: #475569;
+      line-height: 1.45;
+      max-width: 135mm;
+    }
+  </style>
+</head>
+<body>
+  <div class="accent-bar"></div>
+  <div class="part-num">{{PART_NUM}}</div>
+  <h1 class="part-title">{{PART_TITLE}}</h1>
+  <p class="part-desc">{{PART_DESC}}</p>
+</body>
+</html>

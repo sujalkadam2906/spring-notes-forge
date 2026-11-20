@@ -49,3 +49,5 @@ ehthumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+backups_pre_reliability/
